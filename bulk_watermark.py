@@ -4,7 +4,25 @@ import piexif
 from datetime import datetime
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut
+from datetime import datetime, timedelta
+import random
+import csv
 
+def load_custom_date_ranges(csv_path="custom_dates.csv"):
+    ranges = {}
+    try:
+        with open(csv_path, newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                folder = row["folder"]
+                start = datetime.strptime(row["start"], "%Y:%m:%d %H:%M:%S")
+                end = datetime.strptime(row["end"], "%Y:%m:%d %H:%M:%S")
+                ranges[folder] = (start, end)
+    except Exception as e:
+        print("⚠️ Error loading date ranges:", e)
+    return ranges
+
+custom_date_ranges = load_custom_date_ranges()
 input_root = "input_images"
 output_root = "output_images"
 geolocator = Nominatim(user_agent="custom-watermarker")
@@ -47,19 +65,31 @@ def add_watermark(image_path, output_path):
     try:
         img = Image.open(image_path)
         exif_bytes = img.info.get("exif")
-        exif_data = piexif.load(exif_bytes) if exif_bytes else {"0th": {}, "GPS": {}}
+        exif_data = piexif.load(exif_bytes) if exif_bytes else {"0th": {}, "Exif": {}, "GPS": {}}
 
-        datetime_raw = exif_data["0th"].get(piexif.ImageIFD.DateTime, b"Unknown")
-        datetime_str = datetime_raw.decode() if isinstance(datetime_raw, bytes) else str(datetime_raw)
-        date_text = format_datetime(datetime_str)
+        folder_name = os.path.basename(os.path.dirname(image_path))
+
+        # Generate a random date in the folder's range
+        if folder_name in custom_date_ranges:
+            start, end = custom_date_ranges[folder_name]
+            delta = end - start
+            random_seconds = random.randint(0, int(delta.total_seconds()))
+            random_dt = start + timedelta(seconds=random_seconds)
+            exif_datetime_str = random_dt.strftime("%Y:%m:%d %H:%M:%S")
+            display_datetime_str = random_dt.strftime("%d %b %Y %H:%M:%S")
+
+            encoded_date = exif_datetime_str.encode()
+            exif_data["0th"][piexif.ImageIFD.DateTime] = encoded_date
+            exif_data["Exif"][piexif.ExifIFD.DateTimeOriginal] = encoded_date
+            exif_data["Exif"][piexif.ExifIFD.DateTimeDigitized] = encoded_date
+        else:
+            display_datetime_str = "Unknown Date"
 
         gps = exif_data.get("GPS", {})
         lat, lon = convert_gps(gps)
         coords_text = f"{lon:.6f}E {lat:.6f}S" if lat and lon else "Unknown GPS"
         location = get_location_name(lat, lon) if lat and lon else "Address"
 
-        # 🔥 Extract folder name from image path
-        folder_name = os.path.basename(os.path.dirname(image_path))
         custom1 = folder_name
         try:
             prefix, number = folder_name.split("-")
@@ -68,7 +98,7 @@ def add_watermark(image_path, output_path):
             custom2 = "Custom text2"
 
         lines = [
-            date_text,
+            display_datetime_str,
             coords_text,
             location,
             custom1,
@@ -77,7 +107,7 @@ def add_watermark(image_path, output_path):
 
         draw = ImageDraw.Draw(img)
         font_path = "/System/Library/Fonts/Supplemental/Arial.ttf"
-        font = ImageFont.truetype(font_path, 32)
+        font = ImageFont.truetype(font_path, 64)
 
         margin = 20
         line_height = font.getbbox("Hg")[3] + 10
@@ -92,10 +122,12 @@ def add_watermark(image_path, output_path):
             y += line_height
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        img.save(output_path)
-        print(f"✅ {os.path.basename(image_path)} saved to {output_path}")
+        img.save(output_path, exif=piexif.dump(exif_data))
+        print(f"✅ {os.path.basename(image_path)} with random date")
     except Exception as e:
         print(f"❌ Error processing {image_path}: {e}")
+
+
 # Traverse folders
 for root, dirs, files in os.walk(input_root):
     for file in files:
