@@ -2,14 +2,12 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 import piexif
 from datetime import datetime
-from geopy.geocoders import Nominatim
-from geopy.exc import GeocoderTimedOut
 from datetime import datetime, timedelta
 import random
 import csv
 
-def load_custom_date_ranges(csv_path="custom_dates.csv"):
-    ranges = {}
+def load_folder_metadata(csv_path="folder_metadata.csv"):
+    metadata = {}
     try:
         with open(csv_path, newline='') as f:
             reader = csv.DictReader(f)
@@ -17,37 +15,23 @@ def load_custom_date_ranges(csv_path="custom_dates.csv"):
                 folder = row["folder"]
                 start = datetime.strptime(row["start"], "%Y:%m:%d %H:%M:%S")
                 end = datetime.strptime(row["end"], "%Y:%m:%d %H:%M:%S")
-                ranges[folder] = (start, end)
+                lat = float(row["lat"])
+                lon = float(row["lon"])
+                address = row["address"]
+                metadata[folder] = {
+                    "start": start,
+                    "end": end,
+                    "lat": lat,
+                    "lon": lon,
+                    "address": address
+                }
     except Exception as e:
-        print("⚠️ Error loading date ranges:", e)
-    return ranges
+        print("⚠️ Error loading folder metadata:", e)
+    return metadata
 
-custom_date_ranges = load_custom_date_ranges()
+folder_metadata = load_folder_metadata()
 input_root = "input_images"
 output_root = "output_images"
-geolocator = Nominatim(user_agent="custom-watermarker")
-
-def convert_gps(gps_data):
-    def convert(value):
-        return float(value[0]) + float(value[1])/60 + float(value[2])/3600
-
-    if not gps_data or 2 not in gps_data or 4 not in gps_data:
-        return None, None
-
-    lat = convert(gps_data[2])
-    if gps_data[1] == b'S':
-        lat = -lat
-    lon = convert(gps_data[4])
-    if gps_data[3] == b'W':
-        lon = -lon
-    return lat, lon
-
-def get_location_name(lat, lon):
-    try:
-        location = geolocator.reverse((lat, lon), timeout=5)
-        return location.address if location else "Address"
-    except GeocoderTimedOut:
-        return "Address"
 
 def format_datetime(raw):
     try:
@@ -70,8 +54,9 @@ def add_watermark(image_path, output_path):
         folder_name = os.path.basename(os.path.dirname(image_path))
 
         # Generate a random date in the folder's range
-        if folder_name in custom_date_ranges:
-            start, end = custom_date_ranges[folder_name]
+        if folder_name in folder_metadata:
+            start = folder_metadata[folder_name]["start"]
+            end = folder_metadata[folder_name]["end"]
             delta = end - start
             random_seconds = random.randint(0, int(delta.total_seconds()))
             random_dt = start + timedelta(seconds=random_seconds)
@@ -85,10 +70,36 @@ def add_watermark(image_path, output_path):
         else:
             display_datetime_str = "Unknown Date"
 
-        gps = exif_data.get("GPS", {})
-        lat, lon = convert_gps(gps)
-        coords_text = f"{lon:.6f}E {lat:.6f}S" if lat and lon else "Unknown GPS"
-        location = get_location_name(lat, lon) if lat and lon else "Address"
+        if folder_name in folder_metadata:
+            lat = folder_metadata[folder_name]["lat"]
+            lon = folder_metadata[folder_name]["lon"]
+            # Randomly apply small GPS offset to about half the images
+            if random.random() < 0.5:
+                lat += random.uniform(-0.00001, 0.00001)
+                lon += random.uniform(-0.00001, 0.00001)
+            location = folder_metadata[folder_name]["address"]
+            coords_text = f"{lon:.6f}E {lat:.6f}S"
+
+            def to_deg(value, ref_positive, ref_negative):
+                ref = ref_positive if value >= 0 else ref_negative
+                abs_value = abs(value)
+                d = int(abs_value)
+                m = int((abs_value - d) * 60)
+                s = int((abs_value - d - m / 60) * 3600 * 100)
+                return ((d, 1), (m, 1), (s, 100)), ref
+
+            lat_data, lat_ref = to_deg(lat, b'N', b'S')
+            lon_data, lon_ref = to_deg(lon, b'E', b'W')
+
+            exif_data["GPS"] = {
+                piexif.GPSIFD.GPSLatitudeRef: lat_ref,
+                piexif.GPSIFD.GPSLatitude: lat_data,
+                piexif.GPSIFD.GPSLongitudeRef: lon_ref,
+                piexif.GPSIFD.GPSLongitude: lon_data,
+            }
+        else:
+            coords_text = "Unknown GPS"
+            location = "Address"
 
         custom1 = folder_name
         try:
@@ -114,7 +125,7 @@ def add_watermark(image_path, output_path):
         total_height = line_height * len(lines)
 
         x_base = img.width - margin
-        y = img.height - total_height - margin
+        y = img.height - total_height - margin - 64 #add a little space for the bottom
 
         for line in lines:
             line_width = draw.textbbox((0, 0), line, font=font)[2]
