@@ -8,6 +8,7 @@ import csv
 import shutil
 
 # Config
+disable_rotation_for_folders = ["Photo roll meter awal", "Photo situasi site sisi depan"]
 cgk_prefix = "CGK05"
 
 global_start_date = datetime.strptime("2025-04-21", "%Y-%m-%d")
@@ -15,6 +16,10 @@ global_end_date = datetime.strptime("2025-04-24", "%Y-%m-%d")
 global_start_time = datetime.strptime("08:00", "%H:%M").time()
 global_end_time = datetime.strptime("15:00", "%H:%M").time()
 folder_time_span_minutes = 3
+
+input_root = "images"
+input_network_root = "images_with_network"
+input_named_root = "images_ordered"
 
 def load_folder_metadata(csv_path="folder_metadata.csv"):
     metadata = {}
@@ -42,13 +47,14 @@ def load_folder_metadata(csv_path="folder_metadata.csv"):
     return metadata
 
 folder_metadata = load_folder_metadata()
-input_root = "input_images"
 output_root = "output_images"
 
-input_category_folders = [
-    d for d in os.listdir(input_root)
-    if os.path.isdir(os.path.join(input_root, d))
-]
+input_category_folders = []
+for root in [input_root, input_network_root]:
+    input_category_folders += [
+        (root, d) for d in os.listdir(root)
+        if os.path.isdir(os.path.join(root, d))
+    ]
 
 
 def format_datetime(raw):
@@ -63,11 +69,12 @@ def draw_text_with_shadow(draw, position, text, font, shadow_offset=(2, 2)):
     draw.text((x + shadow_offset[0], y + shadow_offset[1]), text, font=font, fill="black")
     draw.text((x, y), text, font=font, fill="white")
 
-def add_watermark(image_path, output_path, folder_name, base_datetime):
+def add_watermark(image_path, output_path, folder_name, base_datetime, category):
     try:
         img = Image.open(image_path)
-        # Apply random rotation before watermarking
-        img = img.rotate(random.choice([90, 180, 270]), expand=True)
+        # Apply random rotation before watermarking, unless category is in disable_rotation_for_folders
+        if category not in disable_rotation_for_folders:
+            img = img.rotate(random.choice([90, 180, 270]), expand=True)
         exif_bytes = img.info.get("exif")
         exif_data = piexif.load(exif_bytes) if exif_bytes else {"0th": {}, "Exif": {}, "GPS": {}}
 
@@ -162,8 +169,8 @@ output_folders = list(folder_metadata.keys())
 
 # Compute folder_gaps mapping each category to number of images in that folder
 folder_gaps = {}
-for category in input_category_folders:
-    input_category_path = os.path.join(input_root, category)
+for root_path, category in input_category_folders:
+    input_category_path = os.path.join(root_path, category)
     if os.path.isdir(input_category_path):
         files = [f for f in os.listdir(input_category_path) if f.lower().endswith((".jpg", ".jpeg"))]
         folder_gaps[category] = len(files)
@@ -182,8 +189,8 @@ for idx, output_folder_name in enumerate(output_folders):
     time_seconds = random.randint(start_seconds, end_seconds)
     base_datetime = datetime.combine(random_date, datetime.min.time()) + timedelta(seconds=time_seconds)
 
-    for category in input_category_folders:
-        input_category_path = os.path.join(input_root, category)
+    for root_path, category in input_category_folders:
+        input_category_path = os.path.join(root_path, category)
         if not os.path.isdir(input_category_path):
             print(f"⚠️ Input category folder not found: {input_category_path}")
             continue
@@ -194,17 +201,7 @@ for idx, output_folder_name in enumerate(output_folders):
             print(f"⚠️ No images found in {input_category_path}")
             continue
 
-        if "Network 2" in category or "Network 4" in category:
-            # For network categories, just pick first image (or could randomize)
-            eligible_files = files[:folder_gaps.get(category, len(files))]
-            source_file = eligible_files[0]
-            source_path = os.path.join(input_category_path, source_file)
-            extension = os.path.splitext(source_file)[1]
-            dest_filename = f"{category}{extension}"
-            dest_path = os.path.join(output_folder_path, dest_filename)
-            shutil.copy2(source_path, dest_path)
-            add_watermark(dest_path, dest_path, output_folder_name, base_datetime)
-        else:
+        if root_path == input_network_root:
             gap = folder_gaps.get(category, len(files))
             def used_keys(suffix):
                 return [
@@ -230,5 +227,56 @@ for idx, output_folder_name in enumerate(output_folders):
                 dest_filename = f"{category} ({suffix}){extension}"
                 dest_path = os.path.join(output_folder_path, dest_filename)
                 shutil.copy2(source_path, dest_path)
-                add_watermark(dest_path, dest_path, output_folder_name, base_datetime)
+                add_watermark(dest_path, dest_path, output_folder_name, base_datetime, category)
                 recently_used_images[(category, selected_file, suffix)] = idx
+        else:
+            # For input_root, just copy images without suffixes
+            gap = folder_gaps.get(category, len(files))
+            def used_keys():
+                return [
+                    f for f in files
+                    if recently_used_images.get((category, f, "default"), -gap - 1) <= idx - gap
+                ]
+
+            eligible_files = used_keys()
+            selected_file = random.choice(eligible_files) if eligible_files else random.choice(files)
+            source_path = os.path.join(input_category_path, selected_file)
+            extension = os.path.splitext(selected_file)[1]
+            dest_filename = f"{category}{extension}"
+            dest_path = os.path.join(output_folder_path, dest_filename)
+            shutil.copy2(source_path, dest_path)
+            add_watermark(dest_path, dest_path, output_folder_name, base_datetime, category)
+            recently_used_images[(category, selected_file, "default")] = idx
+
+# Handle named input folder
+named_input_folders = [
+    d for d in os.listdir(input_named_root)
+    if os.path.isdir(os.path.join(input_named_root, d))
+]
+
+named_mapping = {}
+for category in named_input_folders:
+    path = os.path.join(input_named_root, category)
+    images = sorted([f for f in os.listdir(path) if f.lower().endswith((".jpg", ".jpeg"))])
+    named_mapping[category] = images
+
+# Transpose and assign by order to output folders
+for idx, output_folder_name in enumerate(output_folders):
+    output_folder_path = os.path.join(output_root, output_folder_name)
+    os.makedirs(output_folder_path, exist_ok=True)
+
+    random_date = global_start_date + timedelta(days=random.randint(0, (global_end_date - global_start_date).days))
+    start_seconds = global_start_time.hour * 3600 + global_start_time.minute * 60
+    end_seconds = global_end_time.hour * 3600 + global_end_time.minute * 60
+    time_seconds = random.randint(start_seconds, end_seconds)
+    base_datetime = datetime.combine(random_date, datetime.min.time()) + timedelta(seconds=time_seconds)
+
+    for category, file_list in named_mapping.items():
+        if idx < len(file_list):
+            filename = file_list[idx]
+            source_path = os.path.join(input_named_root, category, filename)
+            extension = os.path.splitext(filename)[1]
+            renamed_filename = f"{category}{extension}"
+            dest_path = os.path.join(output_folder_path, renamed_filename)
+            shutil.copy2(source_path, dest_path)
+            add_watermark(dest_path, dest_path, output_folder_name, base_datetime, category)

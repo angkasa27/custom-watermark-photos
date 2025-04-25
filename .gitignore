@@ -1,5 +1,6 @@
-input_images
-output_images
+images*
+output*
+input*
 
 # Editor directories and files
 .vscode/*
@@ -11,3 +12,4 @@ output_images
 *.njsproj
 *.sln
 *.sw?
+*.xlsx
