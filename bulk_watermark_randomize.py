@@ -8,7 +8,7 @@ import csv
 import shutil
 
 # Config
-disable_rotation_for_folders = ["Photo roll meter awal", "Photo situasi site sisi depan"]
+disable_rotation_for_folders = ["Photo roll meter awal","Photo roll meter akhir", "Photo situasi site sisi kanan", "Photo situasi site sisi kiri", "Photo situasi site sisi depan"]
 cgk_prefix = "CGK05"
 
 global_start_date = datetime.strptime("2025-04-21", "%Y-%m-%d")
@@ -280,3 +280,22 @@ for idx, output_folder_name in enumerate(output_folders):
             dest_path = os.path.join(output_folder_path, renamed_filename)
             shutil.copy2(source_path, dest_path)
             add_watermark(dest_path, dest_path, output_folder_name, base_datetime, category)
+
+print("\n🔍 Validating output folders...")
+
+all_expected_categories = {cat for _, cat in input_category_folders}.union(named_mapping.keys())
+
+for folder_name in output_folders:
+    folder_path = os.path.join(output_root, folder_name)
+    existing_files = [f for f in os.listdir(folder_path) if f.lower().endswith((".jpg", ".jpeg"))]
+    found_categories = set()
+    for file in existing_files:
+        for category in all_expected_categories:
+            if category in file:
+                found_categories.add(category)
+                break
+    missing = all_expected_categories - found_categories
+    if missing:
+        print(f"⚠️ Missing files in '{folder_name}': {', '.join(sorted(missing))}")
+    else:
+        print(f"✅ All expected files present in '{folder_name}'")
