@@ -11,15 +11,16 @@ import shutil
 disable_rotation_for_folders = ["Photo roll meter awal","Photo roll meter akhir", "Photo situasi site sisi kanan", "Photo situasi site sisi kiri", "Photo situasi site sisi depan"]
 cgk_prefix = "CGK05"
 
-global_start_date = datetime.strptime("2025-04-21", "%Y-%m-%d")
-global_end_date = datetime.strptime("2025-04-24", "%Y-%m-%d")
-global_start_time = datetime.strptime("08:00", "%H:%M").time()
-global_end_time = datetime.strptime("15:00", "%H:%M").time()
+global_start_date = datetime.strptime("2025-04-23", "%Y-%m-%d")
+global_end_date = datetime.strptime("2025-04-23", "%Y-%m-%d")
+global_start_time = datetime.strptime("16:48", "%H:%M").time()
+global_end_time = datetime.strptime("17:30", "%H:%M").time()
 folder_time_span_minutes = 3
 
 input_root = "images"
 input_network_root = "images_with_network"
 input_named_root = "images_ordered"
+input_ordered_random_root = "images_ordered_random"
 
 def load_folder_metadata(csv_path="folder_metadata.csv"):
     metadata = {}
@@ -280,6 +281,46 @@ for idx, output_folder_name in enumerate(output_folders):
             dest_path = os.path.join(output_folder_path, renamed_filename)
             shutil.copy2(source_path, dest_path)
             add_watermark(dest_path, dest_path, output_folder_name, base_datetime, category)
+
+ordered_random_folders = [
+    d for d in os.listdir(input_ordered_random_root)
+    if os.path.isdir(os.path.join(input_ordered_random_root, d))
+]
+
+ordered_random_mapping = {}
+for category in ordered_random_folders:
+    path = os.path.join(input_ordered_random_root, category)
+    images = sorted([f for f in os.listdir(path) if f.lower().endswith((".jpg", ".jpeg"))])
+    for img in images:
+        base_name = os.path.splitext(img)[0]  # ignore extension
+        if base_name not in ordered_random_mapping:
+            ordered_random_mapping[base_name] = {}
+        ordered_random_mapping[base_name][category] = img
+
+ordered_random_keys = list(ordered_random_mapping.keys())
+random.shuffle(ordered_random_keys)
+
+for idx, output_folder_name in enumerate(output_folders):
+    output_folder_path = os.path.join(output_root, output_folder_name)
+    os.makedirs(output_folder_path, exist_ok=True)
+
+    random_date = global_start_date + timedelta(days=random.randint(0, (global_end_date - global_start_date).days))
+    start_seconds = global_start_time.hour * 3600 + global_start_time.minute * 60
+    end_seconds = global_end_time.hour * 3600 + global_end_time.minute * 60
+    time_seconds = random.randint(start_seconds, end_seconds)
+    base_datetime = datetime.combine(random_date, datetime.min.time()) + timedelta(seconds=time_seconds)
+
+    if idx < len(ordered_random_keys):
+        base_image_name = ordered_random_keys[idx]
+        for category in ordered_random_folders:
+            if category in ordered_random_mapping[base_image_name]:
+                filename = ordered_random_mapping[base_image_name][category]
+                source_path = os.path.join(input_ordered_random_root, category, filename)
+                extension = os.path.splitext(filename)[1]
+                renamed_filename = f"{category}{extension}"
+                dest_path = os.path.join(output_root, output_folder_name, renamed_filename)
+                shutil.copy2(source_path, dest_path)
+                add_watermark(dest_path, dest_path, output_folder_name, base_datetime, category)
 
 print("\n🔍 Validating output folders...")
 
